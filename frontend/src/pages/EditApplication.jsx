@@ -1,23 +1,107 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import axios from 'axios';
+import axios from '../services/axiosConfig';
 
 const EditApplication = () => {
   const { id } = useParams();
   const navigate = useNavigate();
-  const [formData, setFormData] = useState({});
+  const [formData, setFormData] = useState({
+    // Personal Details
+    first_name: '',
+    middle_name: '',
+    last_name: '',
+    contact_number: '',
+    gender: '',
+    
+    // Academic Details
+    final_percentage: '',
+    tentative_ranking: '',
+    final_year_project: '',
+    other_projects: '',
+    publications: '',
+    
+    // Additional Information
+    extracurricular: '',
+    professional_experience: '',
+    strong_points: '',
+    weak_points: '',
+    preferred_programs: '',
+    references: '',
+    statement_of_purpose: '',
+    intended_research_areas: '',
+    english_proficiency: '',
+    leadership_experience: '',
+    availability_to_start: '',
+    additional_certifications: '',
+    
+    // University Status - New fields
+    target_universities: '',
+    applied_universities: '',
+    accepted_universities: '',
+    enrolled_university: '',
+    enrollment_status: 'planning',
+    study_program: '',
+    admission_year: '',
+    scholarship_status: ''
+  });
+  
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
-  const [currentUser] = useState('shreyaupretyy');
-  const [currentDateTime] = useState('2025-03-21 11:21:21');
+  const [currentUser] = useState('Rishikesh0523');
+  const [currentDateTime] = useState('2025-03-22 14:55:55');
+  const [fileData, setFileData] = useState({
+    transcript: null,
+    cv: null,
+    photo: null
+  });
+  const [fileStatus, setFileStatus] = useState({
+    transcript: { name: '', uploaded: false, uploading: false, error: '' },
+    cv: { name: '', uploaded: false, uploading: false, error: '' },
+    photo: { name: '', uploaded: false, uploading: false, error: '' }
+  });
 
+  // Fetch application data
   useEffect(() => {
     const fetchApplication = async () => {
       try {
         const response = await axios.get(`/api/get-application/${id}`);
         setFormData(response.data);
+        
+        // Set file status for existing uploads
+        const newFileStatus = { ...fileStatus };
+        if (response.data.transcript) {
+          newFileStatus.transcript = {
+            name: typeof response.data.transcript === 'string' ? 
+              response.data.transcript.split('/').pop() : 'Transcript',
+            uploaded: true,
+            uploading: false,
+            error: ''
+          };
+        }
+        
+        if (response.data.cv) {
+          newFileStatus.cv = {
+            name: typeof response.data.cv === 'string' ? 
+              response.data.cv.split('/').pop() : 'CV',
+            uploaded: true,
+            uploading: false,
+            error: ''
+          };
+        }
+        
+        if (response.data.photo) {
+          newFileStatus.photo = {
+            name: typeof response.data.photo === 'string' ? 
+              response.data.photo.split('/').pop() : 'Photo',
+            uploaded: true,
+            uploading: false,
+            error: ''
+          };
+        }
+        
+        setFileStatus(newFileStatus);
         setLoading(false);
       } catch (error) {
         console.error("Error details:", error);
@@ -29,6 +113,7 @@ const EditApplication = () => {
     fetchApplication();
   }, [id]);
 
+  // Handle form field changes
   const handleChange = (e) => {
     const { name, value } = e.target;
     setFormData({
@@ -37,6 +122,81 @@ const EditApplication = () => {
     });
   };
 
+  // Handle file selection
+  const handleFileChange = (e) => {
+    const { name, files } = e.target;
+    if (files && files.length > 0) {
+      setFileData({
+        ...fileData,
+        [name]: files[0]
+      });
+      
+      // Update file status
+      setFileStatus(prev => ({
+        ...prev,
+        [name]: {
+          ...prev[name],
+          name: files[0].name,
+          uploaded: false,
+          uploading: false,
+          error: ''
+        }
+      }));
+    }
+  };
+
+  // Upload a file
+  const uploadFile = async (fileType) => {
+    const file = fileData[fileType];
+    if (!file) return formData[fileType]; // Return existing value if no new file
+    
+    try {
+      setFileStatus(prev => ({
+        ...prev,
+        [fileType]: {
+          ...prev[fileType],
+          uploading: true,
+          error: ''
+        }
+      }));
+      
+      const formDataObj = new FormData();
+      formDataObj.append('file', file);
+      formDataObj.append('type', fileType);
+      formDataObj.append('applicationId', id);
+      
+      const response = await axios.post('/api/upload-file', formDataObj, {
+        headers: {
+          'Content-Type': 'multipart/form-data'
+        }
+      });
+      
+      setFileStatus(prev => ({
+        ...prev,
+        [fileType]: {
+          ...prev[fileType],
+          uploading: false,
+          uploaded: true,
+          error: ''
+        }
+      }));
+      
+      return response.data.fileId; // Return the file ID for storage
+    } catch (error) {
+      console.error(`Error uploading ${fileType}:`, error);
+      setFileStatus(prev => ({
+        ...prev,
+        [fileType]: {
+          ...prev[fileType],
+          uploading: false,
+          error: 'Failed to upload file. Please try again.'
+        }
+      }));
+      return formData[fileType]; // Return existing value on error
+    }
+  };
+
+  // Handle form submission
   const handleSubmit = async (e) => {
     e.preventDefault();
     setSubmitting(true);
@@ -52,10 +212,28 @@ const EditApplication = () => {
         applicationData.final_percentage = parseFloat(applicationData.final_percentage);
       }
       
+      if (applicationData.admission_year && applicationData.admission_year !== '') {
+        applicationData.admission_year = parseInt(applicationData.admission_year, 10);
+      }
+      
       // Remove any fields that shouldn't be sent in the update
       delete applicationData.created_at;
       delete applicationData.updated_at;
       
+      // Upload any new files
+      if (fileData.transcript) {
+        applicationData.transcript = await uploadFile('transcript');
+      }
+      
+      if (fileData.cv) {
+        applicationData.cv = await uploadFile('cv');
+      }
+      
+      if (fileData.photo) {
+        applicationData.photo = await uploadFile('photo');
+      }
+      
+      // Submit the update
       const response = await axios.put(`/api/update-application/${id}`, applicationData);
       setSuccess('Application updated successfully');
       window.scrollTo(0, 0);
@@ -69,6 +247,7 @@ const EditApplication = () => {
     }
   };
 
+  // Navigate back to application view
   const handleCancel = () => {
     navigate(`/admin/application/${id}`);
   };
@@ -89,6 +268,7 @@ const EditApplication = () => {
     );
   }
 
+  // Display error state if application not found
   if (error && !formData.id) {
     return (
       <div className="container-fluid py-4 px-4 px-md-5">
@@ -294,6 +474,163 @@ const EditApplication = () => {
           </div>
         </div>
         
+        {/* University Status Section */}
+        <div className="card border-0 shadow-sm mb-4" style={{ borderRadius: '12px', overflow: 'hidden' }}>
+          <div className="card-header py-3 bg-white border-bottom">
+            <div className="d-flex align-items-center">
+              <i className="bi bi-building text-primary me-2"></i>
+              <h3 className="h5 mb-0">University Status</h3>
+            </div>
+          </div>
+          <div className="card-body">
+            <div className="row g-3">
+              <div className="col-md-6">
+                <div className="form-floating">
+                  <select
+                    className="form-select"
+                    id="enrollment_status"
+                    name="enrollment_status"
+                    value={formData.enrollment_status || 'planning'}
+                    onChange={handleChange}
+                    required
+                  >
+                    <option value="planning">Planning to Apply</option>
+                    <option value="applied">Applied to Universities</option>
+                    <option value="accepted">Accepted by Universities</option>
+                    <option value="enrolled">Enrolled in University</option>
+                  </select>
+                  <label htmlFor="enrollment_status">Current Status <span className="text-danger">*</span></label>
+                </div>
+              </div>
+              
+              {formData.enrollment_status === 'enrolled' && (
+                <div className="col-md-6">
+                  <div className="form-floating">
+                    <input
+                      type="text"
+                      className="form-control"
+                      id="enrolled_university"
+                      name="enrolled_university"
+                      placeholder="Name of university"
+                      value={formData.enrolled_university || ''}
+                      onChange={handleChange}
+                      required={formData.enrollment_status === 'enrolled'}
+                    />
+                    <label htmlFor="enrolled_university">Enrolled University <span className="text-danger">*</span></label>
+                  </div>
+                </div>
+              )}
+              
+              <div className="col-12">
+                <label htmlFor="target_universities" className="form-label">
+                  Target Universities <span className="text-danger">*</span>
+                </label>
+                <textarea
+                  className="form-control"
+                  id="target_universities"
+                  name="target_universities"
+                  rows="2"
+                  value={formData.target_universities || ''}
+                  onChange={handleChange}
+                  required
+                  style={{ borderRadius: '8px' }}
+                ></textarea>
+                <div className="form-text">List universities the student is interested in (comma separated)</div>
+              </div>
+              
+              {formData.enrollment_status !== 'planning' && (
+                <div className="col-12">
+                  <label htmlFor="applied_universities" className="form-label">
+                    Applied Universities
+                  </label>
+                  <textarea
+                    className="form-control"
+                    id="applied_universities"
+                    name="applied_universities"
+                    rows="2"
+                    value={formData.applied_universities || ''}
+                    onChange={handleChange}
+                    style={{ borderRadius: '8px' }}
+                  ></textarea>
+                  <div className="form-text">Universities where applications have been submitted</div>
+                </div>
+              )}
+              
+              {['accepted', 'enrolled'].includes(formData.enrollment_status) && (
+                <div className="col-12">
+                  <label htmlFor="accepted_universities" className="form-label">
+                    Accepted By
+                  </label>
+                  <textarea
+                    className="form-control"
+                    id="accepted_universities"
+                    name="accepted_universities"
+                    rows="2"
+                    value={formData.accepted_universities || ''}
+                    onChange={handleChange}
+                    style={{ borderRadius: '8px' }}
+                  ></textarea>
+                  <div className="form-text">Universities that have accepted the student</div>
+                </div>
+              )}
+              
+              {formData.enrollment_status === 'enrolled' && (
+                <>
+                  <div className="col-md-4">
+                    <div className="form-floating">
+                      <input
+                        type="text"
+                        className="form-control"
+                        id="study_program"
+                        name="study_program"
+                        placeholder="Program name"
+                        value={formData.study_program || ''}
+                        onChange={handleChange}
+                      />
+                      <label htmlFor="study_program">Program of Study</label>
+                    </div>
+                  </div>
+                  
+                  <div className="col-md-4">
+                    <div className="form-floating">
+                      <input
+                        type="number"
+                        className="form-control"
+                        id="admission_year"
+                        name="admission_year"
+                        placeholder="Year"
+                        value={formData.admission_year || ''}
+                        onChange={handleChange}
+                        min="2020"
+                        max="2030"
+                      />
+                      <label htmlFor="admission_year">Year of Admission</label>
+                    </div>
+                  </div>
+                  
+                  <div className="col-md-4">
+                    <div className="form-floating">
+                      <select
+                        className="form-select"
+                        id="scholarship_status"
+                        name="scholarship_status"
+                        value={formData.scholarship_status || ''}
+                        onChange={handleChange}
+                      >
+                        <option value="">Select an option</option>
+                        <option value="none">No Scholarship</option>
+                        <option value="partial">Partial Scholarship</option>
+                        <option value="full">Full Scholarship</option>
+                      </select>
+                      <label htmlFor="scholarship_status">Scholarship Status</label>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+        
         {/* Academic Details Section */}
         <div className="card border-0 shadow-sm mb-4" style={{ borderRadius: '12px', overflow: 'hidden' }}>
           <div className="card-header py-3 bg-white border-bottom">
@@ -389,6 +726,142 @@ const EditApplication = () => {
                   style={{ borderRadius: '8px' }}
                 ></textarea>
                 <div className="form-text">List any academic or research publications you have authored</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        {/* File Uploads Section */}
+        <div className="card border-0 shadow-sm mb-4" style={{ borderRadius: '12px', overflow: 'hidden' }}>
+          <div className="card-header py-3 bg-white border-bottom">
+            <div className="d-flex align-items-center">
+              <i className="bi bi-file-earmark-arrow-up text-primary me-2"></i>
+              <h3 className="h5 mb-0">Documents</h3>
+            </div>
+          </div>
+          <div className="card-body">
+            <div className="row g-3">
+              <div className="col-md-4">
+                <label htmlFor="transcript" className="form-label">
+                  Academic Transcript
+                </label>
+                <div className="input-group mb-1">
+                  <input
+                    type="file"
+                    className="form-control"
+                    id="transcript"
+                    name="transcript"
+                    onChange={handleFileChange}
+                    accept=".pdf,.doc,.docx"
+                    style={{ borderRadius: '8px 0 0 8px' }}
+                  />
+                  {fileStatus.transcript.uploading && (
+                    <span className="input-group-text bg-warning text-white">
+                      <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                      Uploading...
+                    </span>
+                  )}
+                  {!fileStatus.transcript.uploading && fileStatus.transcript.uploaded && (
+                    <span className="input-group-text bg-success text-white" style={{ borderRadius: '0 8px 8px 0' }}>
+                      <i className="bi bi-check-circle-fill me-2"></i>
+                      Uploaded
+                    </span>
+                  )}
+                </div>
+                {fileStatus.transcript.name && !fileStatus.transcript.uploading && !fileStatus.transcript.error && (
+                  <div className="small text-muted mb-2">
+                    <i className="bi bi-file-earmark me-1"></i>
+                    {fileStatus.transcript.name}
+                  </div>
+                )}
+                {fileStatus.transcript.error && (
+                  <div className="small text-danger mb-2">
+                    <i className="bi bi-exclamation-triangle me-1"></i>
+                    {fileStatus.transcript.error}
+                  </div>
+                )}
+              </div>
+              
+              <div className="col-md-4">
+                <label htmlFor="cv" className="form-label">
+                  Curriculum Vitae (CV)
+                </label>
+                <div className="input-group mb-1">
+                  <input
+                    type="file"
+                    className="form-control"
+                    id="cv"
+                    name="cv"
+                    onChange={handleFileChange}
+                    accept=".pdf,.doc,.docx"
+                    style={{ borderRadius: '8px 0 0 8px' }}
+                  />
+                  {fileStatus.cv.uploading && (
+                    <span className="input-group-text bg-warning text-white">
+                      <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                      Uploading...
+                    </span>
+                  )}
+                  {!fileStatus.cv.uploading && fileStatus.cv.uploaded && (
+                    <span className="input-group-text bg-success text-white" style={{ borderRadius: '0 8px 8px 0' }}>
+                      <i className="bi bi-check-circle-fill me-2"></i>
+                      Uploaded
+                    </span>
+                  )}
+                </div>
+                {fileStatus.cv.name && !fileStatus.cv.uploading && !fileStatus.cv.error && (
+                  <div className="small text-muted mb-2">
+                    <i className="bi bi-file-earmark me-1"></i>
+                    {fileStatus.cv.name}
+                  </div>
+                )}
+                {fileStatus.cv.error && (
+                  <div className="small text-danger mb-2">
+                    <i className="bi bi-exclamation-triangle me-1"></i>
+                    {fileStatus.cv.error}
+                  </div>
+                )}
+              </div>
+              
+              <div className="col-md-4">
+                <label htmlFor="photo" className="form-label">
+                  Profile Photo
+                </label>
+                <div className="input-group mb-1">
+                  <input
+                    type="file"
+                    className="form-control"
+                    id="photo"
+                    name="photo"
+                    onChange={handleFileChange}
+                    accept=".jpg,.jpeg,.png"
+                    style={{ borderRadius: '8px 0 0 8px' }}
+                  />
+                  {fileStatus.photo.uploading && (
+                    <span className="input-group-text bg-warning text-white">
+                      <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                      Uploading...
+                    </span>
+                  )}
+                  {!fileStatus.photo.uploading && fileStatus.photo.uploaded && (
+                    <span className="input-group-text bg-success text-white" style={{ borderRadius: '0 8px 8px 0' }}>
+                      <i className="bi bi-check-circle-fill me-2"></i>
+                      Uploaded
+                    </span>
+                  )}
+                </div>
+                {fileStatus.photo.name && !fileStatus.photo.uploading && !fileStatus.photo.error && (
+                  <div className="small text-muted mb-2">
+                    <i className="bi bi-image me-1"></i>
+                    {fileStatus.photo.name}
+                  </div>
+                )}
+                {fileStatus.photo.error && (
+                  <div className="small text-danger mb-2">
+                    <i className="bi bi-exclamation-triangle me-1"></i>
+                    {fileStatus.photo.error}
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -671,6 +1144,28 @@ const EditApplication = () => {
           </div>
         </div>
         
+        {/* Editing Information */}
+        <div className="card border-0 shadow-sm mb-4" style={{ borderRadius: '12px', overflow: 'hidden' }}>
+          <div className="card-header py-3 bg-white border-bottom">
+            <div className="d-flex align-items-center">
+              <i className="bi bi-info-circle text-primary me-2"></i>
+              <h3 className="h5 mb-0">Edit Information</h3>
+            </div>
+          </div>
+          <div className="card-body">
+            <div className="row">
+              <div className="col-md-6">
+                <div className="small text-muted mb-1">Being edited by</div>
+                <div className="fw-bold">{currentUser}</div>
+              </div>
+              <div className="col-md-6">
+                <div className="small text-muted mb-1">Edit date/time</div>
+                <div className="fw-bold">{currentDateTime}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        
         {/* Form Buttons */}
         <div className="d-flex justify-content-between align-items-center mb-4">
           <button 
@@ -715,7 +1210,6 @@ const EditApplication = () => {
           </button>
         </div>
       </form>
-      
     </div>
   );
 };

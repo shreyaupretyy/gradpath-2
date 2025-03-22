@@ -14,6 +14,7 @@ import Settings from '../pages/Settings';
 // import NotFound from '../pages/NotFound';
 import ProtectedRoute from './ProtectedRoute';
 import AdminRoute from './AdminRoute';
+import UserDashboard from '../pages/UserDashboard';
 
 const AppRouter = () => {
   return (
@@ -22,14 +23,14 @@ const AppRouter = () => {
       <Route path="/login" element={<Login />} />
       <Route path="/register" element={<Register />} />
       
-      {/* <Route 
+      <Route 
         path="/dashboard" 
         element={
           <ProtectedRoute>
-            <Dashboard />
+            <UserDashboard />
           </ProtectedRoute>
         } 
-      /> */}
+      />
       
       <Route 
         path="/application" 

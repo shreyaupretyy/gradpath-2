@@ -16,15 +16,17 @@ const AdminDashboard = () => {
   const [showReportModal, setShowReportModal] = useState(false);
   const [reportFormat, setReportFormat] = useState('pdf');
   const [selectedApplication, setSelectedApplication] = useState(null);
-  
+
   // Advanced filtering state
   const [filters, setFilters] = useState({
     searchQuery: '',
     finalPercentage: '',
     gender: '',
+    enrollmentStatus: '',
+    university: '',
     sortBy: 'id'
   });
-  
+
   // CSV report headers
   const csvHeaders = [
     { label: "ID", key: "id" },
@@ -38,7 +40,7 @@ const AdminDashboard = () => {
     { label: "Preferred Programs", key: "preferred_programs" },
     { label: "English Proficiency", key: "english_proficiency" }
   ];
-  
+
   // Fetch applications data
   useEffect(() => {
     const fetchApplications = async () => {
@@ -52,18 +54,18 @@ const AdminDashboard = () => {
         setLoading(false);
       }
     };
-    
+
     fetchApplications();
   }, []);
-  
+
   // Filter applications based on criteria
   const filteredApplications = useMemo(() => {
     let result = [...applications];
-    
+
     // Search query filter (id, email, name, contact)
     if (filters.searchQuery) {
       const query = filters.searchQuery.toLowerCase();
-      result = result.filter(app => 
+      result = result.filter(app =>
         (app.id?.toString().includes(query)) ||
         (app.email?.toLowerCase().includes(query)) ||
         (app.first_name?.toLowerCase().includes(query)) ||
@@ -72,7 +74,7 @@ const AdminDashboard = () => {
         (`${app.first_name} ${app.last_name}`.toLowerCase().includes(query))
       );
     }
-    
+
     // Final percentage filter
     if (filters.finalPercentage) {
       const [min, max] = filters.finalPercentage.split('-').map(Number);
@@ -81,12 +83,28 @@ const AdminDashboard = () => {
         return !isNaN(percentage) && percentage >= min && percentage <= max;
       });
     }
-    
+
     // Gender filter
     if (filters.gender) {
       result = result.filter(app => app.gender === filters.gender);
     }
-    
+
+    // Enrollment status filter
+    if (filters.enrollmentStatus) {
+      result = result.filter(app => app.enrollment_status === filters.enrollmentStatus);
+    }
+
+    // University filter (searches across all university fields)
+    if (filters.university) {
+      const query = filters.university.toLowerCase();
+      result = result.filter(app =>
+        (app.target_universities?.toLowerCase().includes(query)) ||
+        (app.applied_universities?.toLowerCase().includes(query)) ||
+        (app.accepted_universities?.toLowerCase().includes(query)) ||
+        (app.enrolled_university?.toLowerCase().includes(query))
+      );
+    }
+
     // Apply sorting
     result.sort((a, b) => {
       switch (filters.sortBy) {
@@ -102,10 +120,10 @@ const AdminDashboard = () => {
           return 0;
       }
     });
-    
+
     return result;
   }, [applications, filters]);
-  
+
   // Handle filter changes
   const handleFilterChange = (e) => {
     const { name, value } = e.target;
@@ -114,7 +132,7 @@ const AdminDashboard = () => {
       [name]: value
     }));
   };
-  
+
   // Reset all filters
   const resetFilters = () => {
     setFilters({
@@ -124,7 +142,7 @@ const AdminDashboard = () => {
       sortBy: 'id'
     });
   };
-  
+
   // Handle application deletion
   const handleDelete = async (id) => {
     if (window.confirm('Are you sure you want to delete this application?')) {
@@ -138,7 +156,7 @@ const AdminDashboard = () => {
       }
     }
   };
-  
+
   // Fetch detailed application data for report generation
   const fetchApplicationDataForReport = async (applicationId) => {
     try {
@@ -152,27 +170,27 @@ const AdminDashboard = () => {
       setGeneratingReport(false);
     }
   };
-  
+
   // Prepare for report generation
   const handleReportRequest = (application) => {
     setSelectedApplication(application);
     fetchApplicationDataForReport(application.id);
   };
-  
+
   // Generate and download PDF report
   const generatePdfReport = () => {
     if (!reportData) return;
-    
+
     // Create a new jsPDF instance
     const doc = new jsPDF();
-    
+
     // Add title and styling
     doc.setFontSize(20);
     doc.setTextColor(13, 110, 253); // Main blue color
     doc.text('Student Application Report', 105, 15, { align: 'center' });
     doc.setDrawColor(13, 110, 253);
     doc.line(20, 20, 190, 20);
-    
+
     // Add student info
     doc.setFontSize(12);
     doc.setTextColor(0, 0, 0);
@@ -180,59 +198,59 @@ const AdminDashboard = () => {
     doc.text(`Student: ${reportData.first_name || ''} ${reportData.last_name || ''}`, 20, 40);
     doc.text(`Email: ${reportData.email || ''}`, 20, 50);
     doc.text(`Contact: ${reportData.contact_number || ''}`, 20, 60);
-    
+
     // Add academic details
     doc.setFontSize(14);
     doc.setTextColor(13, 110, 253);
     doc.text('Academic Details', 20, 75);
-    
+
     doc.setFontSize(12);
     doc.setTextColor(0, 0, 0);
     doc.text('Final Percentage:', 30, 85);
     doc.text(`${reportData.final_percentage || 'N/A'}%`, 130, 85);
-    
+
     doc.text('Tentative Ranking:', 30, 95);
     doc.text(reportData.tentative_ranking || 'N/A', 130, 95);
-    
+
     doc.text('English Proficiency:', 30, 105);
     doc.text(reportData.english_proficiency || 'N/A', 130, 105);
-    
+
     doc.text('Preferred Programs:', 30, 115);
     const programLines = doc.splitTextToSize(reportData.preferred_programs || 'N/A', 70);
     doc.text(programLines, 130, 115);
-    
+
     // Calculate next Y position based on the number of lines in programs
     let yPosition = 115 + (programLines.length * 7) + 15;
-    
+
     // Add strengths and weaknesses
     doc.setFontSize(14);
     doc.setTextColor(13, 110, 253);
     doc.text('Strengths & Weaknesses', 20, yPosition);
     yPosition += 10;
-    
+
     doc.setFontSize(12);
     doc.setTextColor(0, 0, 0);
     doc.text('Strengths:', 20, yPosition);
-    
+
     // Handle multiline text
     const strengthLines = doc.splitTextToSize(reportData.strong_points || 'N/A', 160);
     doc.text(strengthLines, 30, yPosition + 7);
-    
+
     yPosition += (strengthLines.length * 7) + 15;
     doc.text('Weaknesses:', 20, yPosition);
-    
+
     const weaknessLines = doc.splitTextToSize(reportData.weak_points || 'N/A', 160);
     doc.text(weaknessLines, 30, yPosition + 7);
-    
+
     // Save the PDF with the correct filename format
     const fileName = `${reportData.first_name || 'unknown'}_${reportData.last_name || 'unknown'}_report.pdf`;
     doc.save(fileName);
   };
-  
+
   // Generate and download CSV report
   const prepareCsvData = () => {
     if (!reportData) return [];
-    
+
     return [{
       id: reportData.id || '',
       email: reportData.email || '',
@@ -246,7 +264,7 @@ const AdminDashboard = () => {
       english_proficiency: reportData.english_proficiency || ''
     }];
   };
-  
+
   // Generate report based on selected format
   const generateReport = () => {
     if (reportFormat === 'pdf') {
@@ -255,10 +273,10 @@ const AdminDashboard = () => {
     // CSV download is handled by CSVLink component
     setShowReportModal(false);
   };
-  
+
   // Helper function to get gender icon and color
   const getGenderDisplay = (gender) => {
-    switch(gender) {
+    switch (gender) {
       case 'Male':
         return { icon: 'bi-gender-male', color: '#0d6efd', bgColor: '#e6f0ff', text: 'Male' };
       case 'Female':
@@ -269,15 +287,15 @@ const AdminDashboard = () => {
         return { icon: 'bi-question-circle', color: '#6c757d', bgColor: '#f0f0f0', text: 'Unknown' };
     }
   };
-  
+
   // Helper function to get percentage display class and style
   const getPercentageDisplay = (percentage) => {
     const numericPercentage = parseFloat(percentage);
-    
+
     if (isNaN(numericPercentage)) {
       return { color: '#6c757d', bgColor: '#f0f0f0', textColor: '#6c757d', text: 'N/A' };
     }
-    
+
     if (numericPercentage >= 90) {
       return { color: '#198754', bgColor: '#e8f6f0', textColor: '#198754', text: 'Excellent' };
     } else if (numericPercentage >= 80) {
@@ -290,7 +308,7 @@ const AdminDashboard = () => {
       return { color: '#dc3545', bgColor: '#f8d7da', textColor: '#dc3545', text: 'Below Avg' };
     }
   };
-  
+
   // Display loading state
   if (loading) {
     return (
@@ -318,7 +336,7 @@ const AdminDashboard = () => {
           <p className="text-muted">Manage applications and system settings</p>
         </div>
       </div>
-      
+
       {/* Error and success alerts */}
       {error && (
         <div className="alert alert-danger py-2 px-3 mb-4" style={{
@@ -330,7 +348,7 @@ const AdminDashboard = () => {
           <i className="bi bi-exclamation-circle me-2"></i>{error}
         </div>
       )}
-      
+
       {deleteSuccess && (
         <div className="alert alert-success py-2 px-3 mb-4" style={{
           borderRadius: '8px',
@@ -341,7 +359,7 @@ const AdminDashboard = () => {
           <i className="bi bi-check-circle me-2"></i>{deleteSuccess}
         </div>
       )}
-      
+
       {/* Dashboard Metrics */}
       <div className="row mb-4">
         <div className="col-md-6 col-xl-3 mb-4 mb-xl-0">
@@ -359,7 +377,7 @@ const AdminDashboard = () => {
             </div>
           </div>
         </div>
-        
+
         <div className="col-md-6 col-xl-3 mb-4 mb-xl-0">
           <div className="card border-0 shadow-sm h-100" style={{ borderRadius: '12px' }}>
             <div className="card-body p-4">
@@ -403,7 +421,7 @@ const AdminDashboard = () => {
             </div>
           </div>
         </div>
-        
+
         <div className="col-md-6 col-xl-3 mb-4 mb-md-0">
           <div className="card border-0 shadow-sm h-100" style={{ borderRadius: '12px' }}>
             <div className="card-body p-4">
@@ -422,7 +440,7 @@ const AdminDashboard = () => {
             </div>
           </div>
         </div>
-        
+
         <div className="col-md-6 col-xl-3">
           <div className="card border-0 shadow-sm h-100" style={{ borderRadius: '12px' }}>
             <div className="card-body p-4">
@@ -473,7 +491,42 @@ const AdminDashboard = () => {
                 <label htmlFor="searchQuery">Search by ID, name, email, or contact</label>
               </div>
             </div>
-            
+
+            {/* // Add new filter controls to the filter card */}
+            <div className="col-md-6 col-lg-3">
+              <div className="form-floating">
+                <select
+                  className="form-select"
+                  id="enrollmentStatus"
+                  name="enrollmentStatus"
+                  value={filters.enrollmentStatus}
+                  onChange={handleFilterChange}
+                >
+                  <option value="">All Statuses</option>
+                  <option value="planning">Planning to Apply</option>
+                  <option value="applied">Applied</option>
+                  <option value="accepted">Accepted</option>
+                  <option value="enrolled">Enrolled</option>
+                </select>
+                <label htmlFor="enrollmentStatus">Enrollment Status</label>
+              </div>
+            </div>
+
+            <div className="col-md-6 col-lg-3">
+              <div className="form-floating">
+                <input
+                  type="text"
+                  className="form-select"
+                  id="university"
+                  name="university"
+                  value={filters.university}
+                  onChange={handleFilterChange}
+                  placeholder="Filter by university"
+                />
+                <label htmlFor="university">University (contains)</label>
+              </div>
+            </div>
+
             <div className="col-md-6 col-lg-2">
               <div className="form-floating">
                 <select
@@ -491,7 +544,7 @@ const AdminDashboard = () => {
                 <label htmlFor="gender">Gender</label>
               </div>
             </div>
-            
+
             <div className="col-md-6 col-lg-3">
               <div className="form-floating">
                 <select
@@ -511,7 +564,7 @@ const AdminDashboard = () => {
                 <label htmlFor="finalPercentage">Final Percentage</label>
               </div>
             </div>
-            
+
             <div className="col-md-6 col-lg-3">
               <div className="form-floating">
                 <select
@@ -529,17 +582,17 @@ const AdminDashboard = () => {
                 <label htmlFor="sortBy">Sort Results</label>
               </div>
             </div>
-            
+
             <div className="col-12">
               <div className="d-flex justify-content-between align-items-center">
-                <button 
-                  className="btn btn-outline-secondary" 
+                <button
+                  className="btn btn-outline-secondary"
                   onClick={resetFilters}
                 >
                   <i className="bi bi-arrow-counterclockwise me-2"></i>
                   Reset Filters
                 </button>
-                
+
                 <div className="alert alert-info py-2 mb-0 d-inline-block">
                   <small>
                     <i className="bi bi-info-circle me-2"></i>
@@ -551,7 +604,7 @@ const AdminDashboard = () => {
           </div>
         </div>
       </div>
-      
+
       {/* Applications Table */}
       <div className="card border-0 shadow-sm" style={{ borderRadius: '12px', overflow: 'hidden' }}>
         <div className="card-header py-3 bg-white border-bottom">
@@ -562,7 +615,7 @@ const AdminDashboard = () => {
             </div>
           </div>
         </div>
-        
+
         <div className="card-body p-0">
           {filteredApplications.length === 0 ? (
             <div className="text-center py-5">
@@ -590,7 +643,22 @@ const AdminDashboard = () => {
                   {filteredApplications.map(application => {
                     const genderDisplay = getGenderDisplay(application.gender);
                     const percentageDisplay = getPercentageDisplay(application.final_percentage);
-                    
+                    const getEnrollmentStatusDisplay = (status) => {
+                      switch (status) {
+                        case 'planning':
+                          return { icon: 'bi-hourglass', color: '#6c757d', bgColor: '#f0f0f0', text: 'Planning' };
+                        case 'applied':
+                          return { icon: 'bi-send', color: '#0d6efd', bgColor: '#e6f0ff', text: 'Applied' };
+                        case 'accepted':
+                          return { icon: 'bi-check-circle', color: '#20c997', bgColor: '#e6fbf6', text: 'Accepted' };
+                        case 'enrolled':
+                          return { icon: 'bi-mortarboard-fill', color: '#198754', bgColor: '#e8f6f0', text: 'Enrolled' };
+                        default:
+                          return { icon: 'bi-question-circle', color: '#6c757d', bgColor: '#f0f0f0', text: 'Unknown' };
+                      }
+                    };
+                    const enrollmentDisplay = getEnrollmentStatusDisplay(application.enrollment_status || 'planning');
+
                     return (
                       <tr key={application.id}>
                         <td className="ps-4 fw-medium">{application.id}</td>
@@ -604,8 +672,8 @@ const AdminDashboard = () => {
                         </td>
                         <td>{application.contact_number}</td>
                         <td style={{ textAlign: 'center' }}>
-                          <div className="d-inline-block px-2 py-1 rounded" 
-                              style={{ backgroundColor: genderDisplay.bgColor }}>
+                          <div className="d-inline-block px-2 py-1 rounded"
+                            style={{ backgroundColor: genderDisplay.bgColor }}>
                             <i className={`bi ${genderDisplay.icon} me-1`} style={{ color: genderDisplay.color }}></i>
                             <span style={{ color: genderDisplay.color }}>{genderDisplay.text}</span>
                           </div>
@@ -627,38 +695,52 @@ const AdminDashboard = () => {
                             </div>
                           )}
                         </td>
+                        {/* University Status column */}
+                        <td>
+                          <div className="d-flex align-items-center">
+                            <div className="d-inline-block px-2 py-1 rounded me-2"
+                              style={{ backgroundColor: enrollmentDisplay.bgColor }}>
+                              <i className={`bi ${enrollmentDisplay.icon} me-1`} style={{ color: enrollmentDisplay.color }}></i>
+                              <span style={{ color: enrollmentDisplay.color }}>{enrollmentDisplay.text}</span>
+                            </div>
+
+                            {application.enrollment_status === 'enrolled' && application.enrolled_university && (
+                              <span className="badge bg-success">{application.enrolled_university}</span>
+                            )}
+                          </div>
+                        </td>
                         <td className="text-end pe-4">
                           <div className="d-flex justify-content-end gap-2">
-                            <Link 
+                            <Link
                               to={`/admin/application/${application.id}`}
                               className="btn btn-sm"
-                              style={{ 
-                                backgroundColor: 'rgba(13, 110, 253, 0.1)', 
+                              style={{
+                                backgroundColor: 'rgba(13, 110, 253, 0.1)',
                                 color: '#0d6efd',
-                                borderRadius: '6px' 
+                                borderRadius: '6px'
                               }}
                               title="View Application"
                             >
                               <i className="bi bi-eye me-1"></i> View
                             </Link>
-                            <Link 
+                            <Link
                               to={`/admin/edit-application/${application.id}`}
                               className="btn btn-sm"
-                              style={{ 
-                                backgroundColor: 'rgba(255, 193, 7, 0.1)', 
+                              style={{
+                                backgroundColor: 'rgba(255, 193, 7, 0.1)',
                                 color: '#ffc107',
-                                borderRadius: '6px' 
+                                borderRadius: '6px'
                               }}
                               title="Edit Application"
                             >
                               <i className="bi bi-pencil me-1"></i> Edit
                             </Link>
-                            <button 
+                            <button
                               className="btn btn-sm"
-                              style={{ 
-                                backgroundColor: 'rgba(220, 53, 69, 0.1)', 
+                              style={{
+                                backgroundColor: 'rgba(220, 53, 69, 0.1)',
                                 color: '#dc3545',
-                                borderRadius: '6px' 
+                                borderRadius: '6px'
                               }}
                               onClick={() => handleDelete(application.id)}
                               title="Delete Application"
@@ -667,10 +749,10 @@ const AdminDashboard = () => {
                             </button>
                             <button
                               className="btn btn-sm"
-                              style={{ 
-                                backgroundColor: 'rgba(25, 135, 84, 0.1)', 
+                              style={{
+                                backgroundColor: 'rgba(25, 135, 84, 0.1)',
                                 color: '#198754',
-                                borderRadius: '6px' 
+                                borderRadius: '6px'
                               }}
                               onClick={() => handleReportRequest(application)}
                               title="Generate Report"
@@ -693,7 +775,7 @@ const AdminDashboard = () => {
             </div>
           )}
         </div>
-        
+
         <div className="card-footer bg-white py-3 border-top">
           <div className="d-flex justify-content-between align-items-center">
             <div className="small text-muted">
@@ -715,7 +797,7 @@ const AdminDashboard = () => {
           </div>
         </div>
       </div>
-      
+
       {/* Report Generation Modal */}
       {showReportModal && reportData && (
         <div className="modal fade show" style={{ display: 'block', backgroundColor: 'rgba(0,0,0,0.5)' }} tabIndex="-1">
@@ -733,7 +815,7 @@ const AdminDashboard = () => {
                   <p>
                     Generate a report for <strong>{reportData.first_name} {reportData.last_name}</strong>
                   </p>
-                  
+
                   <div className="form-check mb-2">
                     <input
                       className="form-check-input"
@@ -748,7 +830,7 @@ const AdminDashboard = () => {
                       PDF Format <small className="text-muted">(Comprehensive report with formatting)</small>
                     </label>
                   </div>
-                  
+
                   <div className="form-check">
                     <input
                       className="form-check-input"
@@ -764,7 +846,7 @@ const AdminDashboard = () => {
                     </label>
                   </div>
                 </div>
-                
+
                 <div className="alert alert-info py-2">
                   <small>
                     <i className="bi bi-info-circle me-2"></i>
@@ -776,7 +858,7 @@ const AdminDashboard = () => {
                 <button type="button" className="btn btn-secondary" onClick={() => setShowReportModal(false)}>
                   Cancel
                 </button>
-                
+
                 {reportFormat === 'csv' ? (
                   <CSVLink
                     data={prepareCsvData()}

@@ -1,616 +1,596 @@
-import os
-import logging
-from datetime import datetime
-from io import BytesIO
-
-from flask import Flask, request, jsonify, session, send_file, abort
+from flask import Flask, request, jsonify, send_file, redirect, url_for, session, current_app
+from flask_login import LoginManager, login_user, logout_user, login_required, current_user
 from flask_cors import CORS
-from flask_sqlalchemy import SQLAlchemy
-from werkzeug.security import generate_password_hash, check_password_hash
+from models import db, User, Application, File  # Added File import
+import os
 from werkzeug.utils import secure_filename
-
-# Set up logging
-logging.basicConfig(level=logging.DEBUG)
-logger = logging.getLogger(__name__)
+from datetime import datetime, timedelta
+import mimetypes
+import uuid
+import shutil
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'yoursecretkey'
+# Configure CORS to allow requests from your React app
+CORS(app, resources={r"/api/*": {"origins": "http://localhost:3000"}}, supports_credentials=True)
+
+app.config['SECRET_KEY'] = 'your-secret-key-here'
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///applicants.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['UPLOAD_FOLDER'] = 'uploads'
-app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
-app.config['SESSION_COOKIE_SECURE'] = False  # Set to True in production with HTTPS
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16 MB max upload size
 
-# Create upload folder if it doesn't exist
+# Ensure upload directory exists
 if not os.path.exists(app.config['UPLOAD_FOLDER']):
     os.makedirs(app.config['UPLOAD_FOLDER'])
 
 # Initialize database
-db = SQLAlchemy(app)
-CORS(app, supports_credentials=True, origins=["http://localhost:3000"])
+db.init_app(app)
 
-#############################################
-# Database Models
-#############################################
-class User(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    email = db.Column(db.String(120), unique=True, nullable=False)
-    password = db.Column(db.String(200), nullable=False)
-    is_admin = db.Column(db.Boolean, default=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+# Initialize Flask-Login
+login_manager = LoginManager()
+login_manager.init_app(app)
 
-    applications = db.relationship('Application', backref='user', lazy=True, cascade="all, delete-orphan")
+@login_manager.user_loader
+def load_user(user_id):
+    return User.query.get(int(user_id))
 
-
-class Application(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
-    # Personal Details
-    first_name = db.Column(db.String(100))
-    middle_name = db.Column(db.String(100))
-    last_name = db.Column(db.String(100))
-    contact_number = db.Column(db.String(20))
-    gender = db.Column(db.String(10))
-    # Academic & Additional Details
-    final_percentage = db.Column(db.Float)
-    tentative_ranking = db.Column(db.String(20))
-    final_year_project = db.Column(db.Text)
-    other_projects = db.Column(db.Text)
-    publications = db.Column(db.Text)
-    extracurricular = db.Column(db.Text)
-    professional_experience = db.Column(db.Text)
-    strong_points = db.Column(db.Text)
-    weak_points = db.Column(db.Text)
-    transcript = db.Column(db.String(200))
-    cv = db.Column(db.String(200))
-    photo = db.Column(db.String(200))
-    preferred_programs = db.Column(db.Text)
-    references = db.Column(db.Text)
-    statement_of_purpose = db.Column(db.Text)
-    intended_research_areas = db.Column(db.Text)
-    english_proficiency = db.Column(db.String(50))
-    leadership_experience = db.Column(db.Text)
-    availability_to_start = db.Column(db.String(50))
-    additional_certifications = db.Column(db.Text)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-#############################################
-# Helper Functions
-#############################################
-def application_to_dict(application):
-    """Return application dictionary without the created_at and updated_at fields."""
-    return {
-        'id': application.id,
-        'user_id': application.user_id,
-        'first_name': application.first_name,
-        'middle_name': application.middle_name,
-        'last_name': application.last_name,
-        'contact_number': application.contact_number,
-        'gender': application.gender,
-        'final_percentage': application.final_percentage,
-        'tentative_ranking': application.tentative_ranking,
-        'final_year_project': application.final_year_project,
-        'other_projects': application.other_projects,
-        'publications': application.publications,
-        'extracurricular': application.extracurricular,
-        'professional_experience': application.professional_experience,
-        'strong_points': application.strong_points,
-        'weak_points': application.weak_points,
-        'transcript': application.transcript,
-        'cv': application.cv,
-        'photo': application.photo,
-        'preferred_programs': application.preferred_programs,
-        'references': application.references,
-        'statement_of_purpose': application.statement_of_purpose,
-        'intended_research_areas': application.intended_research_areas,
-        'english_proficiency': application.english_proficiency,
-        'leadership_experience': application.leadership_experience,
-        'availability_to_start': application.availability_to_start,
-        'additional_certifications': application.additional_certifications
-    }
-
-#############################################
-# Endpoints
-#############################################
-
-@app.before_first_request
-def create_initial_users():
-    """Create initial admin, student and demo users if they don't exist."""
-    try:
-        db.create_all()
-        # Create default admin user if not exists
-        admin_user = User.query.filter_by(email='admin@example.com').first()
-        if not admin_user:
-            admin_password = generate_password_hash('admin123', method='sha256')
-            admin = User(
-                email='admin@example.com',
-                password=admin_password,
-                is_admin=True,
-                created_at=datetime.strptime('2025-03-05 19:32:42', '%Y-%m-%d %H:%M:%S')
-            )
-            db.session.add(admin)
-            logger.info("Created admin user: admin@example.com")
-
-        # Create example student user if not exists
-        student_user = User.query.filter_by(email='student@example.com').first()
-        if not student_user:
-            student_password = generate_password_hash('student123', method='sha256')
-            student = User(
-                email='student@example.com',
-                password=student_password,
-                is_admin=False,
-                created_at=datetime.strptime('2025-03-05 19:32:42', '%Y-%m-%d %H:%M:%S')
-            )
-            db.session.add(student)
-            db.session.commit()
-
-            student_app = Application(
-                user_id=student.id,
-                first_name='Test',
-                last_name='Student',
-                contact_number='1234567890',
-                gender='Other',
-                created_at=datetime.strptime('2025-03-05 19:32:42', '%Y-%m-%d %H:%M:%S'),
-                updated_at=datetime.strptime('2025-03-05 19:32:42', '%Y-%m-%d %H:%M:%S')
-            )
-            db.session.add(student_app)
-            logger.info("Created student user: student@example.com")
-
-        # Create demo admin user for shreyaupretyy if not exists
-        shreya_user = User.query.filter_by(email='shreya@example.com').first()
-        if not shreya_user:
-            shreya_password = generate_password_hash('password123', method='sha256')
-            shreya = User(
-                email='shreya@example.com',
-                password=shreya_password,
-                is_admin=True,
-                created_at=datetime.strptime('2025-03-05 19:32:42', '%Y-%m-%d %H:%M:%S')
-            )
-            db.session.add(shreya)
-            logger.info("Created user: shreya@example.com (shreyaupretyy)")
-
+# Create database tables
+with app.app_context():
+    db.create_all()
+    
+    # Create default admin user if no users exist
+    if not User.query.first():
+        admin = User(
+            email='admin@example.com',
+            is_admin=True,
+            first_name='Admin',
+            last_name='User'
+        )
+        admin.set_password('admin123')
+        db.session.add(admin)
         db.session.commit()
-    except Exception as e:
-        db.session.rollback()
-        logger.error(f"Error creating initial users: {str(e)}")
+        print("Default admin user created with email: admin@example.com and password: admin123")
 
+# Helper functions
+def get_file_extension(filename):
+    return os.path.splitext(filename)[1].lower()
+
+def generate_unique_filename(original_filename):
+    """Generate a unique filename with the original extension."""
+    extension = get_file_extension(original_filename)
+    return f"{uuid.uuid4()}{extension}"
+
+def create_user_directory(user_id):
+    """Create a directory for the user's files if it doesn't exist."""
+    user_dir = os.path.join(app.config['UPLOAD_FOLDER'], str(user_id))
+    if not os.path.exists(user_dir):
+        os.makedirs(user_dir)
+    return user_dir
+
+def get_mime_type(file_path):
+    """Get the MIME type of a file."""
+    return mimetypes.guess_type(file_path)[0] or 'application/octet-stream'
+
+# Routes
 @app.route('/api/register', methods=['POST'])
 def register():
-    data = request.json
-    logger.debug(f"Register request received with data: {data}")
-
+    data = request.get_json()
+    
+    # Validate required fields
+    if not data or not data.get('email') or not data.get('password'):
+        return jsonify({'message': 'Email and password are required'}), 400
+    
+    # Check if user already exists
     existing_user = User.query.filter_by(email=data['email']).first()
     if existing_user:
-        logger.warning(f"User already exists: {data['email']}")
-        return jsonify({'message': 'User already exists'}), 400
-
-    try:
-        hashed_password = generate_password_hash(data['password'], method='sha256')
-        new_user = User(
-            email=data['email'],
-            password=hashed_password,
-            is_admin=data.get('is_admin', False),
-            created_at=datetime.strptime('2025-03-05 19:30:39', '%Y-%m-%d %H:%M:%S')
-        )
-        db.session.add(new_user)
-        db.session.commit()
-        logger.info(f"User created successfully: {data['email']}")
-        return jsonify({'message': 'User created successfully', 'user_id': new_user.id}), 201
-    except Exception as e:
-        db.session.rollback()
-        logger.error(f"Error creating user: {str(e)}")
-        return jsonify({'message': f'Failed to create user: {str(e)}'}), 500
-
-@app.route('/api/admin/create-user', methods=['POST'])
-def admin_create_student():
-    logger.debug("Admin create student request received")
-    if 'user_id' not in session or not session.get('is_admin', False):
-        logger.warning("Unauthorized attempt to create student")
-        return jsonify({'message': 'Unauthorized'}), 401
-
-    data = request.json
-    if User.query.filter_by(email=data['email']).first():
-        logger.warning(f"User already exists: {data['email']}")
-        return jsonify({'message': 'User already exists'}), 400
-
-    import random, string
-    random_password = ''.join(random.choice(string.ascii_letters + string.digits) for _ in range(12))
-    try:
-        hashed_password = generate_password_hash(random_password, method='sha256')
-        new_user = User(
-            email=data['email'],
-            password=hashed_password,
-            is_admin=False,
-            created_at=datetime.utcnow()
-        )
-        db.session.add(new_user)
-        db.session.commit()
-
-        new_application = Application(
-            user_id=new_user.id,
-            first_name=data.get('first_name', ''),
-            last_name=data.get('last_name', ''),
-            contact_number=data.get('contact_number', ''),
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow()
-        )
-        db.session.add(new_application)
-        db.session.commit()
-
-        logger.info(f"Student created successfully: {data['email']}")
-        return jsonify({
-            'message': 'Student created successfully',
-            'user_id': new_user.id,
-            'application_id': new_application.id,
-            'temp_password': random_password
-        }), 201
-    except Exception as e:
-        db.session.rollback()
-        logger.error(f"Error creating student: {str(e)}")
-        return jsonify({'message': f'Failed to create student: {str(e)}'}), 500
+        return jsonify({'message': 'Email already registered'}), 400
+    
+    # Create new user
+    new_user = User(
+        email=data['email'],
+        is_admin=data.get('is_admin', False),
+        first_name=data.get('first_name', ''),
+        last_name=data.get('last_name', ''),
+        contact_number=data.get('contact_number', '')
+    )
+    new_user.set_password(data['password'])
+    
+    db.session.add(new_user)
+    db.session.commit()
+    
+    return jsonify({
+        'message': 'User registered successfully',
+        'user_id': new_user.id
+    }), 201
 
 @app.route('/api/login', methods=['POST'])
 def login():
-    data = request.json
-    logger.debug(f"Login attempt for: {data['email']}")
-    try:
-        user = User.query.filter_by(email=data['email']).first()
-        if not user or not check_password_hash(user.password, data['password']):
-            logger.warning(f"Invalid credentials for: {data['email']}")
-            return jsonify({'message': 'Invalid credentials'}), 401
-
-        session.clear()
-        session['user_id'] = user.id
-        session['is_admin'] = user.is_admin
-        logger.info(f"Login successful for: {data['email']}, admin: {user.is_admin}")
-        return jsonify({
-            'message': 'Login successful',
-            'user_id': user.id,
-            'is_admin': user.is_admin
-        }), 200
-    except Exception as e:
-        logger.error(f"Login error: {str(e)}")
-        return jsonify({'message': f'Login error: {str(e)}'}), 500
-
-@app.route('/api/logout', methods=['POST'])
-def logout():
-    logger.debug(f"Logout request for user_id: {session.get('user_id')}")
-    session.pop('user_id', None)
-    session.pop('is_admin', None)
-    return jsonify({'message': 'Logout successful'}), 200
+    data = request.get_json()
+    
+    if not data or not data.get('email') or not data.get('password'):
+        return jsonify({'message': 'Email and password are required'}), 400
+    
+    user = User.query.filter_by(email=data['email']).first()
+    
+    if not user or not user.check_password(data['password']):
+        return jsonify({'message': 'Invalid email or password'}), 401
+    
+    login_user(user)
+    
+    return jsonify({
+        'message': 'Login successful',
+        'user_id': user.id,
+        'is_admin': user.is_admin
+    }), 200
 
 @app.route('/api/check-auth', methods=['GET'])
 def check_auth():
-    logger.debug(f"Check auth request: user_id in session: {'user_id' in session}")
-    if 'user_id' in session:
-        logger.info(f"User authenticated: {session['user_id']}, is_admin: {session.get('is_admin', False)}")
+    if current_user.is_authenticated:
         return jsonify({
             'authenticated': True,
-            'user_id': session['user_id'],
-            'is_admin': session.get('is_admin', False)
+            'user_id': current_user.id,
+            'is_admin': current_user.is_admin
         }), 200
-    logger.warning("User not authenticated")
-    return jsonify({'authenticated': False}), 401
+    else:
+        return jsonify({
+            'authenticated': False
+        }), 200
+
+@app.route('/api/logout', methods=['POST'])
+def logout():
+    logout_user()
+    return jsonify({'message': 'Logout successful'}), 200
+
+@app.route('/api/upload-file', methods=['POST'])
+@login_required
+def upload_file():
+    # Check if file part is in the request
+    if 'file' not in request.files:
+        return jsonify({'message': 'No file part in the request'}), 400
+    
+    file = request.files['file']
+    file_type = request.form.get('type', 'document')
+    application_id = request.form.get('applicationId')
+    
+    # If user didn't select a file
+    if file.filename == '':
+        return jsonify({'message': 'No file selected'}), 400
+    
+    # Validate file type
+    allowed_extensions = {
+        'transcript': ['.pdf', '.doc', '.docx'],
+        'cv': ['.pdf', '.doc', '.docx'],
+        'photo': ['.jpg', '.jpeg', '.png']
+    }
+    
+    file_extension = get_file_extension(file.filename)
+    if file_type in allowed_extensions and file_extension not in allowed_extensions[file_type]:
+        return jsonify({
+            'message': f'Invalid file type. Allowed types for {file_type}: {", ".join(allowed_extensions[file_type])}'
+        }), 400
+    
+    # Create user directory
+    user_dir = create_user_directory(current_user.id)
+    
+    # Generate a unique filename
+    secure_name = secure_filename(file.filename)
+    unique_filename = f"{file_type}_{generate_unique_filename(secure_name)}"
+    file_path = os.path.join(user_dir, unique_filename)
+    
+    # Save the file
+    file.save(file_path)
+    
+    # Get file info
+    file_size = os.path.getsize(file_path)
+    mime_type = get_mime_type(file_path)
+    
+    # Create file record in database
+    new_file = File(
+        user_id=current_user.id,
+        original_name=secure_name,
+        file_path=file_path,
+        file_type=file_type,
+        mime_type=mime_type,
+        file_size=file_size
+    )
+    
+    db.session.add(new_file)
+    db.session.commit()
+    
+    # If this is for an existing application, update the application record
+    if application_id:
+        application = Application.query.get(application_id)
+        if application and application.user_id == current_user.id:
+            setattr(application, file_type, new_file.id)
+            db.session.commit()
+    
+    return jsonify({
+        'message': 'File uploaded successfully',
+        'fileId': new_file.id,
+        'originalName': new_file.original_name,
+        'fileType': new_file.file_type,
+        'fileSize': new_file.file_size
+    }), 201
+
+@app.route('/api/files/<int:file_id>/download', methods=['GET'])
+@login_required
+def download_file(file_id):
+    file = File.query.get_or_404(file_id)
+    
+    # Security check - only admin or file owner can download
+    if not current_user.is_admin and file.user_id != current_user.id:
+        return jsonify({'message': 'Unauthorized access'}), 403
+    
+    # Check if file exists on disk
+    if not os.path.exists(file.file_path):
+        return jsonify({'message': 'File not found on server'}), 404
+    
+    # Set attachment filename to original name
+    return send_file(
+        file.file_path,
+        as_attachment=True,
+        download_name=file.original_name,
+        mimetype=file.mime_type
+    )
+
+@app.route('/api/files/<int:file_id>/view', methods=['GET'])
+@login_required
+def view_file(file_id):
+    file = File.query.get_or_404(file_id)
+    
+    # Security check - only admin or file owner can view
+    if not current_user.is_admin and file.user_id != current_user.id:
+        return jsonify({'message': 'Unauthorized access'}), 403
+    
+    # Check if file exists on disk
+    if not os.path.exists(file.file_path):
+        return jsonify({'message': 'File not found on server'}), 404
+    
+    # Show in browser instead of downloading
+    return send_file(
+        file.file_path,
+        mimetype=file.mime_type
+    )
 
 @app.route('/api/submit-application', methods=['POST'])
+@login_required
 def submit_application():
-    if 'user_id' not in session:
-        return jsonify({'message': 'Unauthorized'}), 401
-
-    user_id = session['user_id']
-    data = request.json
-    current_time = datetime.strptime('2025-03-05 19:30:39', '%Y-%m-%d %H:%M:%S')
-
-    existing_application = Application.query.filter_by(user_id=user_id).first()
+    data = request.get_json()
+    
+    # Check if user already has an application
+    existing_application = Application.query.filter_by(user_id=current_user.id).first()
+    
     if existing_application:
+        # Update existing application
         for key, value in data.items():
             if hasattr(existing_application, key):
                 setattr(existing_application, key, value)
-        existing_application.updated_at = current_time
+        
+        existing_application.updated_at = datetime.utcnow()
         db.session.commit()
-        return jsonify({'message': 'Application updated successfully'}), 200
-
-    new_application = Application(
-        user_id=user_id,
-        first_name=data.get('first_name'),
-        middle_name=data.get('middle_name'),
-        last_name=data.get('last_name'),
-        contact_number=data.get('contact_number'),
-        gender=data.get('gender'),
-        final_percentage=data.get('final_percentage'),
-        tentative_ranking=data.get('tentative_ranking'),
-        final_year_project=data.get('final_year_project'),
-        other_projects=data.get('other_projects'),
-        publications=data.get('publications'),
-        extracurricular=data.get('extracurricular'),
-        professional_experience=data.get('professional_experience'),
-        strong_points=data.get('strong_points'),
-        weak_points=data.get('weak_points'),
-        transcript=data.get('transcript'),
-        cv=data.get('cv'),
-        photo=data.get('photo'),
-        preferred_programs=data.get('preferred_programs'),
-        references=data.get('references'),
-        statement_of_purpose=data.get('statement_of_purpose'),
-        intended_research_areas=data.get('intended_research_areas'),
-        english_proficiency=data.get('english_proficiency'),
-        leadership_experience=data.get('leadership_experience'),
-        availability_to_start=data.get('availability_to_start'),
-        additional_certifications=data.get('additional_certifications'),
-        created_at=current_time,
-        updated_at=current_time
-    )
-    db.session.add(new_application)
-    db.session.commit()
-    return jsonify({'message': 'Application submitted successfully'}), 201
-
-@app.route('/api/upload-file', methods=['POST'])
-def upload_file():
-    if 'user_id' not in session:
-        return jsonify({'message': 'Unauthorized'}), 401
-    if 'file' not in request.files:
-        return jsonify({'message': 'No file part'}), 400
-
-    file = request.files['file']
-    file_type = request.form.get('type')
-    if file.filename == '':
-        return jsonify({'message': 'No selected file'}), 400
-
-    filename = secure_filename(f"{session['user_id']}_{file_type}_{file.filename}")
-    file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-    file.save(file_path)
-
-    application = Application.query.filter_by(user_id=session['user_id']).first()
-    if application:
-        if file_type == 'transcript':
-            application.transcript = file_path
-        elif file_type == 'cv':
-            application.cv = file_path
-        elif file_type == 'photo':
-            application.photo = file_path
-        application.updated_at = datetime.strptime('2025-03-05 19:32:42', '%Y-%m-%d %H:%M:%S')
+        
+        return jsonify({
+            'message': 'Application updated successfully',
+            'application_id': existing_application.id
+        }), 200
+    else:
+        # Create new application
+        new_application = Application(user_id=current_user.id)
+        
+        for key, value in data.items():
+            if hasattr(new_application, key):
+                setattr(new_application, key, value)
+        
+        db.session.add(new_application)
         db.session.commit()
-    return jsonify({'message': 'File uploaded successfully', 'path': file_path}), 200
+        
+        return jsonify({
+            'message': 'Application submitted successfully',
+            'application_id': new_application.id
+        }), 201
 
 @app.route('/api/get-application', methods=['GET'])
-def get_application():
-    if 'user_id' not in session:
-        logger.warning("Unauthorized attempt to get application")
-        return jsonify({'message': 'Unauthorized'}), 401
-
-    user_id = request.args.get('user_id', session['user_id'])
-    logger.debug(f"Get application request for user_id: {user_id}")
-    if str(user_id) != str(session['user_id']) and not session.get('is_admin', False):
-        logger.warning(f"Unauthorized attempt to view another user's application: {user_id}")
-        return jsonify({'message': 'Unauthorized'}), 401
-
-    application = Application.query.filter_by(user_id=user_id).first()
+@login_required
+def get_current_user_application():
+    application = Application.query.filter_by(user_id=current_user.id).first()
+    
     if not application:
-        logger.warning(f"Application not found for user_id: {user_id}")
-        return jsonify({'message': 'Application not found'}), 404
-
-    logger.info(f"Application data retrieved for user_id: {user_id}")
-    return jsonify(application_to_dict(application)), 200
-
-@app.route('/uploads/<path:filename>', methods=['GET'])
-def serve_file(filename):
-    try:
-        file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-        normalized_path = os.path.normpath(file_path)
-        if not normalized_path.startswith(os.path.abspath(app.config['UPLOAD_FOLDER'])):
-            logger.warning(f"Attempted directory traversal attack: {filename}")
-            abort(403)
-        if not os.path.isfile(normalized_path):
-            logger.warning(f"File not found: {normalized_path}")
-            abort(404)
-        return send_file(normalized_path, as_attachment=True)
-    except Exception as e:
-        logger.error(f"Error serving file {filename}: {str(e)}")
-        abort(500)
-
-@app.route('/api/generate-report/<int:application_id>', methods=['GET'])
-def generate_report(application_id):
-    if 'user_id' not in session or not session.get('is_admin', False):
-        logger.warning("Unauthorized attempt to generate report")
-        return jsonify({'message': 'Unauthorized'}), 401
-    try:
-        application = Application.query.get(application_id)
-        if not application:
-            return jsonify({'message': 'Application not found'}), 404
-
-        buffer = BytesIO()
-        report_text = f"""
-Application Report
------------------
-Name: {application.first_name} {application.last_name}
-Contact: {application.contact_number}
-Gender: {application.gender}
-Final Percentage: {application.final_percentage}%
-Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-"""
-        buffer.write(report_text.encode())
-        buffer.seek(0)
-        return send_file(
-            buffer,
-            mimetype='text/plain',
-            as_attachment=True,
-            download_name=f"{application.first_name.lower()}_{application.last_name.lower()}_report.txt"
-        )
-    except Exception as e:
-        logger.error(f"Error generating report: {str(e)}")
-        return jsonify({'message': f'Error generating report: {str(e)}'}), 500
+        return jsonify({'message': 'No application found for this user'}), 404
+    
+    return jsonify(application.to_dict()), 200
 
 @app.route('/api/get-application/<int:application_id>', methods=['GET'])
+@login_required
 def get_application_by_id(application_id):
-    if 'user_id' not in session or not session.get('is_admin', False):
-        logger.warning("Unauthorized attempt to get application by ID")
-        return jsonify({'message': 'Unauthorized'}), 401
-
-    logger.debug(f"Get application request by ID: {application_id}")
-    application = Application.query.get(application_id)
-    if not application:
-        logger.warning(f"Application not found for ID: {application_id}")
-        return jsonify({'message': 'Application not found'}), 404
-
-    logger.info(f"Application data retrieved for ID: {application_id}")
-    return jsonify(application_to_dict(application)), 200
-
-@app.route('/api/get-all-applications', methods=['GET'])
-def get_all_applications():
-    if 'user_id' not in session or not session.get('is_admin', False):
-        logger.warning("Unauthorized attempt to get all applications")
-        return jsonify({'message': 'Unauthorized'}), 401
-
-    logger.debug("Get all applications request")
-    applications = Application.query.all()
-    applications_data = []
-    for application in applications:
-        user = User.query.get(application.user_id)
-        applications_data.append({
-            'id': application.id,
-            'user_id': application.user_id,
-            'email': user.email if user else 'Unknown',
-            'first_name': application.first_name,
-            'last_name': application.last_name,
-            'contact_number': application.contact_number,
-            'gender': application.gender,
-            'final_percentage': application.final_percentage,
-        })
-    logger.info(f"Retrieved {len(applications_data)} applications")
-    return jsonify(applications_data), 200
+    application = Application.query.get_or_404(application_id)
+    
+    # Security check - only admin or application owner can view
+    if not current_user.is_admin and application.user_id != current_user.id:
+        return jsonify({'message': 'Unauthorized access'}), 403
+    
+    return jsonify(application.to_dict()), 200
 
 @app.route('/api/update-application/<int:application_id>', methods=['PUT'])
+@login_required
 def update_application(application_id):
-    if 'user_id' not in session or not session.get('is_admin', False):
-        logger.warning("Unauthorized attempt to update application")
-        return jsonify({'message': 'Unauthorized'}), 401
-
-    logger.debug(f"Update application request for ID: {application_id}")
-    application = Application.query.get(application_id)
-    if not application:
-        logger.warning(f"Application not found for ID: {application_id}")
-        return jsonify({'message': 'Application not found'}), 404
-
-    data = request.json
+    application = Application.query.get_or_404(application_id)
+    
+    # Security check - only admin or application owner can update
+    if not current_user.is_admin and application.user_id != current_user.id:
+        return jsonify({'message': 'Unauthorized access'}), 403
+    
+    data = request.get_json()
+    
+    # Update application fields
     for key, value in data.items():
-        if hasattr(application, key) and key not in ['id', 'user_id', 'created_at', 'updated_at']:
-            if key == 'final_percentage' and value is not None:
-                try:
-                    setattr(application, key, float(value))
-                except (ValueError, TypeError):
-                    logger.warning(f"Failed to convert final_percentage value: {value}")
-                    pass
-            else:
-                setattr(application, key, value)
-    application.updated_at = datetime.strptime('2025-03-05 19:32:42', '%Y-%m-%d %H:%M:%S')
-    try:
-        db.session.commit()
-        logger.info(f"Application updated successfully: {application_id}")
-        return jsonify({'message': 'Application updated successfully'}), 200
-    except Exception as e:
-        db.session.rollback()
-        logger.error(f"Failed to update application: {str(e)}")
-        return jsonify({'message': f'Failed to update application: {str(e)}'}), 500
-
-@app.route('/api/delete-application/<int:application_id>', methods=['DELETE'])
-def delete_application(application_id):
-    if 'user_id' not in session or not session.get('is_admin', False):
-        logger.warning("Unauthorized attempt to delete application")
-        return jsonify({'message': 'Unauthorized'}), 401
-
-    logger.debug(f"Delete application request for ID: {application_id}")
-    application = Application.query.get(application_id)
-    if not application:
-        logger.warning(f"Application not found for ID: {application_id}")
-        return jsonify({'message': 'Application not found'}), 404
-
-    try:
-        db.session.delete(application)
-        db.session.commit()
-        logger.info(f"Application deleted successfully: {application_id}")
-        return jsonify({'message': 'Application deleted successfully'}), 200
-    except Exception as e:
-        db.session.rollback()
-        logger.error(f"Failed to delete application: {str(e)}")
-        return jsonify({'message': f'Failed to delete application: {str(e)}'}), 500
-
-@app.route('/api/admin/users', methods=['GET'])
-def get_all_users():
-    if 'user_id' not in session or not session.get('is_admin', False):
-        logger.warning("Unauthorized attempt to get all users")
-        return jsonify({'message': 'Unauthorized'}), 401
-
-    logger.debug("Get all users request")
-    users = User.query.filter(User.is_admin == False).all()
-    users_data = []
-    for user in users:
-        application = Application.query.filter_by(user_id=user.id).first()
-        users_data.append({
-            'id': user.id,
-            'email': user.email,
-            'has_application': application is not None,
-            'application_id': application.id if application else None,
-            'first_name': application.first_name if application else '',
-            'last_name': application.last_name if application else ''
-        })
-    logger.info(f"Retrieved {len(users_data)} users")
-    return jsonify(users_data), 200
-
-@app.route('/api/admin/delete-user/<int:user_id>', methods=['DELETE'])
-def delete_user(user_id):
-    if 'user_id' not in session or not session.get('is_admin', False):
-        logger.warning("Unauthorized attempt to delete user")
-        return jsonify({'message': 'Unauthorized'}), 401
-
-    user = User.query.get(user_id)
-    if not user:
-        logger.warning(f"User not found for deletion: {user_id}")
-        return jsonify({'message': 'User not found'}), 404
-    try:
-        db.session.delete(user)
-        db.session.commit()
-        logger.info(f"User deleted successfully: {user.email}")
-        return jsonify({'message': f'User {user.email} deleted successfully'}), 200
-    except Exception as e:
-        db.session.rollback()
-        logger.error(f"Failed to delete user: {str(e)}")
-        return jsonify({'message': f'Failed to delete user: {str(e)}'}), 500
-
-@app.route('/api/admin/reset-password/<int:user_id>', methods=['POST'])
-def reset_user_password(user_id):
-    if 'user_id' not in session or not session.get('is_admin', False):
-        logger.warning("Unauthorized attempt to reset password")
-        return jsonify({'message': 'Unauthorized'}), 401
-
-    logger.debug(f"Reset password request for user_id: {user_id}")
-    user = User.query.get(user_id)
-    if not user:
-        logger.warning(f"User not found for ID: {user_id}")
-        return jsonify({'message': 'User not found'}), 404
-
-    import random, string
-    random_password = ''.join(random.choice(string.ascii_letters + string.digits) for _ in range(12))
-    user.password = generate_password_hash(random_password, method='sha256')
+        if hasattr(application, key):
+            setattr(application, key, value)
+    
+    application.updated_at = datetime.utcnow()
     db.session.commit()
-    logger.info(f"Password reset successfully for user_id: {user_id}")
+    
     return jsonify({
-        'message': 'Password reset successfully',
-        'temp_password': random_password
+        'message': 'Application updated successfully',
+        'application_id': application.id
     }), 200
 
-@app.route('/api/debug/current-user', methods=['GET'])
-def debug_current_user():
-    logger.debug("Debug current user request")
-    if 'user_id' in session:
-        user = User.query.get(session['user_id'])
-        if user:
-            return jsonify({
-                'user_id': user.id,
-                'email': user.email,
-                'is_admin': user.is_admin
-            }), 200
-    return jsonify({'message': 'No user logged in'}), 200
+@app.route('/api/update-application-status/<int:application_id>', methods=['PUT'])
+@login_required
+def update_application_status(application_id):
+    application = Application.query.get_or_404(application_id)
+    
+    # Security check - only admin or application owner can update
+    if not current_user.is_admin and application.user_id != current_user.id:
+        return jsonify({'message': 'Unauthorized access'}), 403
+    
+    data = request.get_json()
+    
+    # Update status fields
+    status_fields = [
+        'enrollment_status', 'target_universities', 'applied_universities',
+        'accepted_universities', 'enrolled_university', 'study_program',
+        'admission_year', 'scholarship_status'
+    ]
+    
+    for field in status_fields:
+        if field in data:
+            setattr(application, field, data[field])
+    
+    application.updated_at = datetime.utcnow()
+    db.session.commit()
+    
+    return jsonify({
+        'message': 'Application status updated successfully',
+        'application_id': application.id
+    }), 200
+
+@app.route('/api/delete-application/<int:application_id>', methods=['DELETE'])
+@login_required
+def delete_application(application_id):
+    application = Application.query.get_or_404(application_id)
+    
+    # Security check - only admin or application owner can delete
+    if not current_user.is_admin and application.user_id != current_user.id:
+        return jsonify({'message': 'Unauthorized access'}), 403
+    
+    # Delete associated files if they're no longer needed
+    for file_type in ['transcript', 'cv', 'photo']:
+        file_id = getattr(application, file_type)
+        if file_id:
+            file = File.query.get(file_id)
+            if file:
+                # Check if file is used by any other application
+                other_usage = False
+                for attr in ['transcript', 'cv', 'photo']:
+                    if Application.query.filter(
+                        Application.id != application_id,
+                        getattr(Application, attr) == file_id
+                    ).first():
+                        other_usage = True
+                        break
+                
+                if not other_usage:
+                    # Delete file from disk
+                    if os.path.exists(file.file_path):
+                        os.remove(file.file_path)
+                    
+                    # Delete file record
+                    db.session.delete(file)
+    
+    # Delete application
+    db.session.delete(application)
+    db.session.commit()
+    
+    return jsonify({'message': 'Application deleted successfully'}), 200
+
+@app.route('/api/get-all-applications', methods=['GET'])
+@login_required
+def get_all_applications():
+    # Security check - only admin can view all applications
+    if not current_user.is_admin:
+        return jsonify({'message': 'Unauthorized access'}), 403
+    
+    applications = Application.query.all()
+    return jsonify([app.to_dict() for app in applications]), 200
+
+@app.route('/api/user/profile', methods=['GET'])
+@login_required
+def get_user_profile():
+    """
+    Get the current user's profile information.
+    This endpoint returns user details for the currently authenticated user.
+    """
+    try:
+        # Get basic user data from database
+        user_data = {
+            'id': current_user.id,
+            'email': current_user.email,
+            'first_name': current_user.first_name,
+            'last_name': current_user.last_name,
+            'is_admin': current_user.is_admin,
+            # Use the information you provided
+            'username': 'Rishikesh0523',
+            'current_date': '2025-03-22 16:22:40'
+        }
+        
+        return jsonify(user_data), 200
+    except Exception as e:
+        app.logger.error(f"Error fetching user profile: {str(e)}")
+        return jsonify({'message': 'Failed to retrieve user profile'}), 500
+
+@app.route('/api/admin/users', methods=['GET'])
+@login_required
+def get_all_users():
+    # Security check - only admin can view all users
+    if not current_user.is_admin:
+        return jsonify({'message': 'Unauthorized access'}), 403
+    
+    users = User.query.all()
+    
+    # For each user, check if they have an application
+    user_data = []
+    for user in users:
+        user_dict = user.to_dict()
+        application = Application.query.filter_by(user_id=user.id).first()
+        user_dict['has_application'] = application is not None
+        if application:
+            user_dict['application_id'] = application.id
+        user_data.append(user_dict)
+    
+    return jsonify(user_data), 200
+
+@app.route('/api/admin/create-user', methods=['POST'])
+@login_required
+def create_user():
+    # Security check - only admin can create users
+    if not current_user.is_admin:
+        return jsonify({'message': 'Unauthorized access'}), 403
+    
+    data = request.get_json()
+    
+    # Validate required fields
+    if not data or not data.get('email') or not data.get('password'):
+        return jsonify({'message': 'Email and password are required'}), 400
+    
+    # Check if user already exists
+    existing_user = User.query.filter_by(email=data['email']).first()
+    if existing_user:
+        return jsonify({'message': 'Email already registered'}), 400
+    
+    # Create new user
+    new_user = User(
+        email=data['email'],
+        is_admin=data.get('is_admin', False),
+        first_name=data.get('first_name', ''),
+        last_name=data.get('last_name', ''),
+        contact_number=data.get('contact_number', '')
+    )
+    new_user.set_password(data['password'])
+    
+    db.session.add(new_user)
+    db.session.commit()
+    
+    return jsonify({
+        'message': 'User created successfully',
+        'user_id': new_user.id
+    }), 201
+
+@app.route('/api/admin/delete-user/<int:user_id>', methods=['DELETE'])
+@login_required
+def delete_user(user_id):
+    # Security check - only admin can delete users
+    if not current_user.is_admin:
+        return jsonify({'message': 'Unauthorized access'}), 403
+    
+    # Cannot delete self
+    if user_id == current_user.id:
+        return jsonify({'message': 'Cannot delete your own account'}), 400
+    
+    user = User.query.get_or_404(user_id)
+    
+    # Delete user's files and directories
+    user_dir = os.path.join(app.config['UPLOAD_FOLDER'], str(user_id))
+    if os.path.exists(user_dir):
+        shutil.rmtree(user_dir)
+    
+    # User's applications and files will be deleted via cascade
+    db.session.delete(user)
+    db.session.commit()
+    
+    return jsonify({'message': 'User deleted successfully'}), 200
+
+@app.route('/api/admin/university-report', methods=['GET'])
+@login_required
+def get_university_report():
+    # Security check - only admin can access reports
+    if not current_user.is_admin:
+        return jsonify({'message': 'Unauthorized access'}), 403
+    
+    # Get enrolled students grouped by university
+    enrolled_data = db.session.query(
+        Application.enrolled_university,
+        db.func.count(Application.id).label('count')
+    ).filter(
+        Application.enrollment_status == 'enrolled',
+        Application.enrolled_university != None,
+        Application.enrolled_university != ''
+    ).group_by(Application.enrolled_university).all()
+    
+    # Format report data
+    university_report = [
+        {
+            'university': item[0],
+            'student_count': item[1]
+        } for item in enrolled_data
+    ]
+    
+    return jsonify({
+        'report_date': '2025-03-22 16:22:40',  # Use the provided date/time
+        'total_enrolled': sum(item['student_count'] for item in university_report),
+        'universities': university_report,
+        'generated_by': 'Rishikesh0523'  # Add the username
+    }), 200
+
+@app.route('/api/admin/enrollment-statistics', methods=['GET'])
+@login_required
+def get_enrollment_statistics():
+    # Security check - only admin can access statistics
+    if not current_user.is_admin:
+        return jsonify({'message': 'Unauthorized access'}), 403
+    
+    # Count applications by enrollment status
+    status_counts = {}
+    for status in ['planning', 'applied', 'accepted', 'enrolled']:
+        count = Application.query.filter_by(enrollment_status=status).count()
+        status_counts[status] = count
+    
+    # Count application with no enrollment status (legacy data)
+    none_count = Application.query.filter(
+        (Application.enrollment_status == None) | 
+        (Application.enrollment_status == '')
+    ).count()
+    
+    if none_count > 0:
+        status_counts['none'] = none_count
+    
+    # Get total applications
+    total_applications = Application.query.count()
+    
+    return jsonify({
+        'report_date': '2025-03-22 16:22:40',  # Use the provided date/time
+        'total_applications': total_applications,
+        'status_counts': status_counts,
+        'generated_by': 'Rishikesh0523'  # Add the username
+    }), 200
+
+# Error handlers
+@app.errorhandler(404)
+def not_found(error):
+    return jsonify({'message': 'Resource not found'}), 404
+
+@app.errorhandler(500)
+def server_error(error):
+    return jsonify({'message': 'Internal server error'}), 500
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5000)
+    app.run(debug=True)

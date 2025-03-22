@@ -1,15 +1,25 @@
+// services/axiosConfig.js
 import axios from 'axios';
 
-// Base URL configuration
-axios.defaults.baseURL = 'http://localhost:5000';
+// Create custom axios instance
+const instance = axios.create({
+  baseURL: 'http://localhost:5000',
+  timeout: 300000,
+  withCredentials: true // Important for cookies/session
+});
 
-// Configure axios to include credentials (cookies) with requests
-axios.defaults.withCredentials = true;
-
-// Add request interceptor for logging
-axios.interceptors.request.use(
+// Request interceptor
+instance.interceptors.request.use(
   (config) => {
-    console.log(`Request: ${config.method.toUpperCase()} ${config.url}`);
+    console.log(`Request: ${config.method?.toUpperCase()} ${config.url}`);
+    
+    // Ensure content type for submission
+    if (config.method === 'post' || config.method === 'put') {
+      if (!(config.data instanceof FormData)) {
+        config.headers['Content-Type'] = 'application/json';
+      }
+    }
+    
     return config;
   },
   (error) => {
@@ -18,22 +28,16 @@ axios.interceptors.request.use(
   }
 );
 
-// Add response interceptor for logging
-axios.interceptors.response.use(
+// Response interceptor
+instance.interceptors.response.use(
   (response) => {
     console.log(`Response: ${response.status} from ${response.config.url}`);
     return response;
   },
   (error) => {
-    if (error.response) {
-      console.error(`Response error: ${error.response.status} - ${error.response.data.message || 'Unknown error'}`);
-    } else if (error.request) {
-      console.error('No response received:', error.request);
-    } else {
-      console.error('Error setting up request:', error.message);
-    }
+    console.error('Response error:', error.response ? `${error.response.status} - ${error.response.data?.message || 'Unknown error'}` : error.message);
     return Promise.reject(error);
   }
 );
 
-export default axios;
+export default instance;

@@ -169,6 +169,18 @@ const Navbar = () => {
                     </li> */}
                   </>
                 )}
+                {!authStatus.isAdmin && (
+                  <>
+                    <li className="nav-item mx-1">
+                      <Link 
+                        className={`nav-link text-white px-3 ${isActive('/dashboard') && 'active'}`} 
+                        to="/dashboard"
+                      >
+                        <i className="bi bi-speedometer2 me-1"></i> Dashboard
+                      </Link>
+                    </li>
+                  </>
+                )}
               </ul>
             </div>
 
