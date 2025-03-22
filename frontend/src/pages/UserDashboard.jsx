@@ -8,7 +8,7 @@ const UserDashboard = () => {
   const [error, setError] = useState('');
   const [application, setApplication] = useState(null);
   const [user, setUser] = useState(null);
-  const [currentUser] = useState('Rishikesh0523');
+  const [currentUser] = useState('User');
   const [currentDateTime] = useState('2025-03-22 16:04:53');
   const [showStatusModal, setShowStatusModal] = useState(false);
   const [statusFormData, setStatusFormData] = useState({

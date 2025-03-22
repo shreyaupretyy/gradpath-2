@@ -11,7 +11,7 @@ const ViewApplication = () => {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
-  const [currentUser] = useState('Rishikesh0523');
+  const [currentUser] = useState('User');
   const [currentDateTime] = useState('2025-03-22 15:03:50');
   const [fileLoading, setFileLoading] = useState({
     transcript: false,

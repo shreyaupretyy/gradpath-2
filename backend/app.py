@@ -429,7 +429,7 @@ def get_user_profile():
             'last_name': current_user.last_name,
             'is_admin': current_user.is_admin,
             # Use the information you provided
-            'username': 'Rishikesh0523',
+            'username': 'User',
             'current_date': '2025-03-22 16:22:40'
         }
         
@@ -548,7 +548,7 @@ def get_university_report():
         'report_date': '2025-03-22 16:22:40',  # Use the provided date/time
         'total_enrolled': sum(item['student_count'] for item in university_report),
         'universities': university_report,
-        'generated_by': 'Rishikesh0523'  # Add the username
+        'generated_by': 'User'  # Add the username
     }), 200
 
 @app.route('/api/admin/enrollment-statistics', methods=['GET'])
@@ -580,7 +580,7 @@ def get_enrollment_statistics():
         'report_date': '2025-03-22 16:22:40',  # Use the provided date/time
         'total_applications': total_applications,
         'status_counts': status_counts,
-        'generated_by': 'Rishikesh0523'  # Add the username
+        'generated_by': 'User'  # Add the username
     }), 200
 
 # Error handlers

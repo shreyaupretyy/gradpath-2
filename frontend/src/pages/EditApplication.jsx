@@ -49,7 +49,7 @@ const EditApplication = () => {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
-  const [currentUser] = useState('Rishikesh0523');
+  const [currentUser] = useState('User');
   const [currentDateTime] = useState('2025-03-22 14:55:55');
   const [fileData, setFileData] = useState({
     transcript: null,
