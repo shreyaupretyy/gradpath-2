@@ -63,8 +63,13 @@ A web application for managing student applications for higher education. Admins
 2. Open your browser and navigate to `http://localhost:3000`
 3. Use the admin dashboard to manage student records, search and filter students, and download reports.
 
+## Screenshots
 
+### User Dashboard
+![User Dashboard](screenshots/user_dashboard.png)
 
+### Admin Dashboard
+![Admin Dashboard](screenshots/admin_dashboard.png)
 
 ## Contributing
 
@@ -85,5 +90,5 @@ This project is licensed under the MIT License.
 
 If you have any questions or need further assistance, please contact:
 
-- Name: Shreya Uprety
-- Email: shreyyauprety@gmail.com
+- **Name:** Shreya Uprety  
+- **Email:** shreyyauprety@gmail.com
